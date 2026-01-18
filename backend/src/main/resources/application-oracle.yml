@@ -1,0 +1,28 @@
+# Oracle Database Configuration with Kerberos
+# Activate with: --spring.profiles.active=oracle
+
+datalens:
+  datasource:
+    mode: oracle
+
+  oracle:
+    # Kerberos Configuration
+    kerberos:
+      # Path to krb5.conf file
+      config-path: ${KRB5_CONF_PATH:/etc/krb5.conf}
+      # Path to Kerberos credential cache
+      # Usually /tmp/krb5cc_<uid> or set via KRB5CCNAME env var
+      ccache-path: ${KRB5_CCACHE}
+
+    # Query timeout in seconds
+    query-timeout-seconds: ${QUERY_TIMEOUT:60}
+
+    # Environment-specific JDBC URLs
+    # Note: No username/password needed - Kerberos handles authentication
+    environments:
+      dev:
+        url: ${DEV_DB_URL:jdbc:oracle:thin:@//dev-host:1521/devdb}
+      uat:
+        url: ${UAT_DB_URL:jdbc:oracle:thin:@//uat-host:1521/uatdb}
+      prod:
+        url: ${PROD_DB_URL:jdbc:oracle:thin:@//prod-host:1521/proddb}

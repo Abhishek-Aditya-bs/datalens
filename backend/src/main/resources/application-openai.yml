@@ -1,0 +1,24 @@
+# OpenAI Configuration (Standard API Key Auth)
+# Activate with: --spring.profiles.active=openai
+
+datalens:
+  llm:
+    provider: openai
+
+spring:
+  # Exclude Azure OpenAI auto-configuration when using standard OpenAI
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.azure.openai.AzureOpenAiAutoConfiguration
+  # Spring AI OpenAI Configuration
+  ai:
+    openai:
+      # Your OpenAI API key
+      api-key: ${OPENAI_API_KEY}
+      chat:
+        options:
+          # Use gpt-4o by default, or override with OPENAI_MODEL env var
+          # For your org's GPT-5.1, set: OPENAI_MODEL=gpt-5.1
+          model: ${OPENAI_MODEL:gpt-4o}
+          temperature: 0.7
+          max-tokens: 4096

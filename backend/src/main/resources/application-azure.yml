@@ -1,0 +1,33 @@
+# Azure OpenAI Configuration
+# Activate with: --spring.profiles.active=azure
+
+datalens:
+  llm:
+    provider: azure
+
+# Azure OpenAI Settings
+azure:
+  openai:
+    # Azure OpenAI endpoint (e.g., https://your-resource.openai.azure.com)
+    endpoint: ${AZURE_OPENAI_ENDPOINT}
+    # Entra ID / Azure AD Configuration for Certificate Auth
+    tenant-id: ${AZURE_TENANT_ID}
+    client-id: ${AZURE_CLIENT_ID}
+    # Path to .pem certificate file
+    certificate-path: ${AZURE_CERT_PATH}
+    # Deployment name (your model deployment)
+    deployment-name: ${AZURE_DEPLOYMENT_NAME:gpt-4}
+
+# Spring AI Azure OpenAI Configuration
+spring:
+  ai:
+    azure:
+      openai:
+        # Note: Do NOT set api-key when using certificate auth
+        # The absence of api-key triggers Entra ID authentication
+        chat:
+          options:
+            deployment-name: ${AZURE_DEPLOYMENT_NAME:gpt-4}
+            temperature: 0.7
+            max-tokens: 4096
+            # Do not set logprobs - not supported by GPT-5.1

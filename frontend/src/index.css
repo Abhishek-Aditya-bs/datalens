@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Light mode (default) */
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+}
+
+/* Dark mode - TRUE BLACK */
+.dark body {
+  @apply bg-black text-white;
+}
+
+/* Custom scrollbar - Light */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-100 rounded;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded hover:bg-gray-400;
+}
+
+/* Custom scrollbar - Dark */
+.dark ::-webkit-scrollbar-track {
+  background: #111;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #333;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+/* Code blocks */
+pre {
+  @apply bg-gray-900 text-gray-100 rounded-lg p-4 overflow-x-auto text-sm;
+}
+
+.dark pre {
+  background: #0a0a0a;
+  border: 1px solid #222;
+}
+
+code {
+  @apply font-mono;
+}
+
+/* Inline code - Light */
+:not(pre) > code {
+  @apply bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-sm;
+}
+
+/* Inline code - Dark */
+.dark :not(pre) > code {
+  background: #1a1a1a;
+  color: #e5e5e5;
+}
+
+/* Tables in markdown - Light */
+table {
+  @apply w-full border-collapse text-sm;
+}
+
+th {
+  @apply bg-gray-100 border border-gray-200 px-3 py-2 text-left font-semibold;
+}
+
+td {
+  @apply border border-gray-200 px-3 py-2;
+}
+
+/* Tables in markdown - Dark */
+.dark th {
+  background: #111;
+  border-color: #333;
+  color: #fff;
+}
+
+.dark td {
+  border-color: #333;
+  color: #ccc;
+}
+
+/* Animation for streaming */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.streaming-cursor::after {
+  content: '▋';
+  animation: pulse 1s infinite;
+}
+
+/* Prose dark mode overrides - TRUE BLACK */
+.dark .prose {
+  color: #e5e5e5;
+}
+
+.dark .prose strong {
+  color: #fff;
+}
+
+.dark .prose h1,
+.dark .prose h2,
+.dark .prose h3,
+.dark .prose h4 {
+  color: #fff;
+}
+
+.dark .prose a {
+  @apply text-primary-400;
+}
+
+.dark .prose blockquote {
+  border-color: #333;
+  color: #999;
+}
+
+.dark .prose hr {
+  border-color: #333;
+}
+
+.dark .prose li::marker {
+  color: #666;
+}

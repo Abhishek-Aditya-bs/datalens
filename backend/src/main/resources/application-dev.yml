@@ -1,0 +1,19 @@
+# Development Profile - Mock Mode
+# For local development without Oracle database
+# Activate with: --spring.profiles.active=dev,mock,openai
+
+datalens:
+  datasource:
+    mode: mock
+
+  # Schema names used in mock data
+  schema:
+    default: MOCK_SCHEMA
+    secondary: MOCK_SCHEMA_B
+
+# Debug logging for development
+logging:
+  level:
+    io.datalens: DEBUG
+    org.springframework.ai: DEBUG
+    org.springframework.web: DEBUG
