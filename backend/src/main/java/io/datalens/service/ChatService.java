@@ -3,6 +3,7 @@ package io.datalens.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.datalens.telemetry.TelemetryService;
 import io.datalens.tools.DatabaseTools;
+import io.datalens.tools.SplunkTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -42,6 +43,7 @@ public class ChatService {
     private final ChatModel chatModel;
     private final ChatMemory chatMemory;
     private final DatabaseTools databaseTools;
+    private final SplunkTools splunkTools;
     private final TelemetryService telemetryService;
     private final ObjectMapper objectMapper;
     private final String systemPrompt;
@@ -51,6 +53,7 @@ public class ChatService {
                        ChatModel chatModel,
                        ChatMemory chatMemory,
                        DatabaseTools databaseTools,
+                       @org.springframework.beans.factory.annotation.Autowired(required = false) SplunkTools splunkTools,
                        TelemetryService telemetryService,
                        ObjectMapper objectMapper,
                        List<ToolCallback> databaseToolCallbacks,
@@ -61,6 +64,7 @@ public class ChatService {
         this.chatModel = chatModel;
         this.chatMemory = chatMemory;
         this.databaseTools = databaseTools;
+        this.splunkTools = splunkTools;
         this.telemetryService = telemetryService;
         this.objectMapper = objectMapper;
         this.toolCallbacks = databaseToolCallbacks;
@@ -229,6 +233,32 @@ public class ChatService {
                         (String) args.get("schema")
                 );
                 case "listTables" -> databaseTools.listTables((String) args.get("schema"));
+                case "splunkCheckConnection" -> {
+                    if (splunkTools == null) yield "{\"error\": \"Splunk tools not available. Enable the splunk profile.\"}";
+                    yield splunkTools.splunkCheckConnection();
+                }
+                case "splunkGetIndexForEnvironment" -> {
+                    if (splunkTools == null) yield "{\"error\": \"Splunk tools not available. Enable the splunk profile.\"}";
+                    yield splunkTools.splunkGetIndexForEnvironment((String) args.get("env"));
+                }
+                case "splunkExecuteQuery" -> {
+                    if (splunkTools == null) yield "{\"error\": \"Splunk tools not available. Enable the splunk profile.\"}";
+                    Integer maxResults = args.get("maxResults") != null ? ((Number) args.get("maxResults")).intValue() : null;
+                    yield splunkTools.splunkExecuteQuery(
+                            (String) args.get("query"),
+                            (String) args.get("earliestTime"),
+                            (String) args.get("latestTime"),
+                            maxResults
+                    );
+                }
+                case "splunkGetAvailableIndexes" -> {
+                    if (splunkTools == null) yield "{\"error\": \"Splunk tools not available. Enable the splunk profile.\"}";
+                    yield splunkTools.splunkGetAvailableIndexes();
+                }
+                case "splunkGetSourcetypes" -> {
+                    if (splunkTools == null) yield "{\"error\": \"Splunk tools not available. Enable the splunk profile.\"}";
+                    yield splunkTools.splunkGetSourcetypes((String) args.get("index"));
+                }
                 default -> "{\"error\": \"Unknown tool: " + toolName + "\"}";
             };
         } catch (Exception e) {

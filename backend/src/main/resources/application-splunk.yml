@@ -1,0 +1,20 @@
+# Splunk Configuration
+# Activate with: --spring.profiles.active=splunk
+
+datalens:
+  splunk:
+    host: ${SPLUNK_HOST:splunk.yourcompany.com}
+    port: ${SPLUNK_PORT:8089}
+    username: ${SPLUNK_USERNAME:your_username}
+    password: ${SPLUNK_PASSWORD:your_password}
+    verify-ssl: ${SPLUNK_VERIFY_SSL:false}
+    timeout: ${SPLUNK_TIMEOUT:30}
+    indexes:
+      uat: ${SPLUNK_INDEX_UAT:index_app_fxs_uat}
+      prod: ${SPLUNK_INDEX_PROD:index_app_fxs}
+    query:
+      default-earliest-time: ${SPLUNK_DEFAULT_EARLIEST:-30d}
+      default-latest-time: ${SPLUNK_DEFAULT_LATEST:now}
+      max-results: ${SPLUNK_MAX_RESULTS:10000}
+      page-size: ${SPLUNK_PAGE_SIZE:1000}
+      max-execution-time: ${SPLUNK_MAX_EXEC_TIME:300}

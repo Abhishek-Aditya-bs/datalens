@@ -1,12 +1,14 @@
 package io.datalens.config;
 
 import io.datalens.tools.DatabaseTools;
+import io.datalens.tools.SplunkTools;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,6 +16,8 @@ import org.springframework.core.io.Resource;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -31,19 +35,28 @@ public class ChatClientConfig {
     @Value("${datalens.schema.secondary:SCHEMA_B}")
     private String secondarySchema;
 
+    @Autowired(required = false)
+    private SplunkTools splunkTools;
+
     /**
-     * Extract tool callbacks from DatabaseTools for manual tool execution.
+     * Extract tool callbacks from DatabaseTools (and SplunkTools if available) for manual tool execution.
      */
     @Bean
     public List<ToolCallback> databaseToolCallbacks(DatabaseTools databaseTools) {
+        List<Object> toolObjects = new ArrayList<>();
+        toolObjects.add(databaseTools);
+        if (splunkTools != null) {
+            toolObjects.add(splunkTools);
+        }
+
         MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
-                .toolObjects(databaseTools)
+                .toolObjects(toolObjects.toArray())
                 .build();
         return List.of(provider.getToolCallbacks());
     }
 
     /**
-     * Creates a ChatClient with database tools and conversation memory.
+     * Creates a ChatClient with database tools (and Splunk tools if available) and conversation memory.
      */
     @Bean
     public ChatClient chatClient(ChatModel chatModel,
@@ -51,9 +64,15 @@ public class ChatClientConfig {
                                   ChatMemory chatMemory) throws IOException {
         String systemPrompt = loadSystemPrompt();
 
+        List<Object> tools = new ArrayList<>();
+        tools.add(databaseTools);
+        if (splunkTools != null) {
+            tools.add(splunkTools);
+        }
+
         return ChatClient.builder(chatModel)
                 .defaultSystem(systemPrompt)
-                .defaultTools(databaseTools)
+                .defaultTools(tools.toArray())
                 .defaultAdvisors(new MessageChatMemoryAdvisor(chatMemory))
                 .build();
     }
