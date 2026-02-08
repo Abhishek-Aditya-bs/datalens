@@ -1,0 +1,9 @@
+datalens:
+  outlook:
+    shared-mailbox-email: ${OUTLOOK_SHARED_MAILBOX:team-mailbox@yourcompany.com}
+    search-personal-mailbox: ${OUTLOOK_SEARCH_PERSONAL:true}
+    search-shared-mailbox: ${OUTLOOK_SEARCH_SHARED:true}
+    max-search-results: ${OUTLOOK_MAX_RESULTS:50}
+    search-timeout-seconds: ${OUTLOOK_SEARCH_TIMEOUT:30}
+    search-all-folders: ${OUTLOOK_SEARCH_ALL_FOLDERS:false}
+    max-body-chars: ${OUTLOOK_MAX_BODY_CHARS:5000}

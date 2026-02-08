@@ -2,7 +2,9 @@ package io.datalens.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.datalens.telemetry.TelemetryService;
+import io.datalens.tools.BitbucketTools;
 import io.datalens.tools.DatabaseTools;
+import io.datalens.tools.OutlookTools;
 import io.datalens.tools.SplunkTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +46,8 @@ public class ChatService {
     private final ChatMemory chatMemory;
     private final DatabaseTools databaseTools;
     private final SplunkTools splunkTools;
+    private final BitbucketTools bitbucketTools;
+    private final OutlookTools outlookTools;
     private final TelemetryService telemetryService;
     private final ObjectMapper objectMapper;
     private final String systemPrompt;
@@ -54,6 +58,8 @@ public class ChatService {
                        ChatMemory chatMemory,
                        DatabaseTools databaseTools,
                        @org.springframework.beans.factory.annotation.Autowired(required = false) SplunkTools splunkTools,
+                       @org.springframework.beans.factory.annotation.Autowired(required = false) BitbucketTools bitbucketTools,
+                       @org.springframework.beans.factory.annotation.Autowired(required = false) OutlookTools outlookTools,
                        TelemetryService telemetryService,
                        ObjectMapper objectMapper,
                        List<ToolCallback> databaseToolCallbacks,
@@ -65,6 +71,8 @@ public class ChatService {
         this.chatMemory = chatMemory;
         this.databaseTools = databaseTools;
         this.splunkTools = splunkTools;
+        this.bitbucketTools = bitbucketTools;
+        this.outlookTools = outlookTools;
         this.telemetryService = telemetryService;
         this.objectMapper = objectMapper;
         this.toolCallbacks = databaseToolCallbacks;
@@ -258,6 +266,37 @@ public class ChatService {
                 case "splunkGetSourcetypes" -> {
                     if (splunkTools == null) yield "{\"error\": \"Splunk tools not available. Enable the splunk profile.\"}";
                     yield splunkTools.splunkGetSourcetypes((String) args.get("index"));
+                }
+                case "bitbucketCheckConnection" -> {
+                    if (bitbucketTools == null) yield "{\"error\": \"Bitbucket tools not available. Enable the bitbucket profile.\"}";
+                    yield bitbucketTools.bitbucketCheckConnection();
+                }
+                case "bitbucketSearchCode" -> {
+                    if (bitbucketTools == null) yield "{\"error\": \"Bitbucket tools not available. Enable the bitbucket profile.\"}";
+                    Integer maxResults = args.get("maxResults") != null ? ((Number) args.get("maxResults")).intValue() : null;
+                    yield bitbucketTools.bitbucketSearchCode((String) args.get("query"), maxResults);
+                }
+                case "bitbucketReadFile" -> {
+                    if (bitbucketTools == null) yield "{\"error\": \"Bitbucket tools not available. Enable the bitbucket profile.\"}";
+                    yield bitbucketTools.bitbucketReadFile(
+                            (String) args.get("repoSlug"),
+                            (String) args.get("filePath"),
+                            (String) args.get("branch")
+                    );
+                }
+                case "outlookCheckConnection" -> {
+                    if (outlookTools == null) yield "{\"error\": \"Outlook tools not available. Enable the outlook profile.\"}";
+                    yield outlookTools.outlookCheckConnection();
+                }
+                case "outlookGetEmailChain" -> {
+                    if (outlookTools == null) yield "{\"error\": \"Outlook tools not available. Enable the outlook profile.\"}";
+                    Boolean includePersonal = args.get("includePersonal") != null ? (Boolean) args.get("includePersonal") : null;
+                    Boolean includeShared = args.get("includeShared") != null ? (Boolean) args.get("includeShared") : null;
+                    yield outlookTools.outlookGetEmailChain(
+                            (String) args.get("searchText"),
+                            includePersonal,
+                            includeShared
+                    );
                 }
                 default -> "{\"error\": \"Unknown tool: " + toolName + "\"}";
             };

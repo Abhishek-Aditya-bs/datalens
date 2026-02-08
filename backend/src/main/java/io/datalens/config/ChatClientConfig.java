@@ -2,6 +2,7 @@ package io.datalens.config;
 
 import io.datalens.tools.BitbucketTools;
 import io.datalens.tools.DatabaseTools;
+import io.datalens.tools.OutlookTools;
 import io.datalens.tools.SplunkTools;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -42,6 +43,9 @@ public class ChatClientConfig {
     @Autowired(required = false)
     private BitbucketTools bitbucketTools;
 
+    @Autowired(required = false)
+    private OutlookTools outlookTools;
+
     /**
      * Extract tool callbacks from DatabaseTools (and SplunkTools if available) for manual tool execution.
      */
@@ -54,6 +58,9 @@ public class ChatClientConfig {
         }
         if (bitbucketTools != null) {
             toolObjects.add(bitbucketTools);
+        }
+        if (outlookTools != null) {
+            toolObjects.add(outlookTools);
         }
 
         MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
@@ -78,6 +85,9 @@ public class ChatClientConfig {
         }
         if (bitbucketTools != null) {
             tools.add(bitbucketTools);
+        }
+        if (outlookTools != null) {
+            tools.add(outlookTools);
         }
 
         return ChatClient.builder(chatModel)
