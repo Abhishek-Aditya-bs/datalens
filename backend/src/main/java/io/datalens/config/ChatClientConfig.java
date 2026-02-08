@@ -1,5 +1,6 @@
 package io.datalens.config;
 
+import io.datalens.tools.BitbucketTools;
 import io.datalens.tools.DatabaseTools;
 import io.datalens.tools.SplunkTools;
 import org.springframework.ai.chat.client.ChatClient;
@@ -38,6 +39,9 @@ public class ChatClientConfig {
     @Autowired(required = false)
     private SplunkTools splunkTools;
 
+    @Autowired(required = false)
+    private BitbucketTools bitbucketTools;
+
     /**
      * Extract tool callbacks from DatabaseTools (and SplunkTools if available) for manual tool execution.
      */
@@ -47,6 +51,9 @@ public class ChatClientConfig {
         toolObjects.add(databaseTools);
         if (splunkTools != null) {
             toolObjects.add(splunkTools);
+        }
+        if (bitbucketTools != null) {
+            toolObjects.add(bitbucketTools);
         }
 
         MethodToolCallbackProvider provider = MethodToolCallbackProvider.builder()
@@ -68,6 +75,9 @@ public class ChatClientConfig {
         tools.add(databaseTools);
         if (splunkTools != null) {
             tools.add(splunkTools);
+        }
+        if (bitbucketTools != null) {
+            tools.add(bitbucketTools);
         }
 
         return ChatClient.builder(chatModel)

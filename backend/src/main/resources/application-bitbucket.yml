@@ -1,0 +1,11 @@
+# Bitbucket Data Center Configuration
+# Activate with: --spring.profiles.active=bitbucket
+
+datalens:
+  bitbucket:
+    base-url: ${BITBUCKET_BASE_URL:https://bitbucket.yourcompany.com}
+    token: ${BITBUCKET_TOKEN:your_personal_access_token}
+    default-project: ${BITBUCKET_DEFAULT_PROJECT:MYPROJ}
+    verify-ssl: ${BITBUCKET_VERIFY_SSL:true}
+    connect-timeout: ${BITBUCKET_CONNECT_TIMEOUT:10}
+    read-timeout: ${BITBUCKET_READ_TIMEOUT:30}
