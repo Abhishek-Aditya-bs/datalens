@@ -51,7 +51,7 @@ public class OutlookClient {
 
     @PostConstruct
     public void init() {
-        String dllName = "jacob-1.18-x64.dll";
+        String dllName = "jacob-1.17-x64.dll";
         // Search multiple classpath locations:
         // 1. /native/ — extracted by maven-dependency-plugin during build
         // 2. JAR root — bundled inside com.hynnet:jacob dependency
