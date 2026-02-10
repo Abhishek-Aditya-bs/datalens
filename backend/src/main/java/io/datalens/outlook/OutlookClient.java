@@ -51,7 +51,7 @@ public class OutlookClient {
 
     @PostConstruct
     public void init() {
-        String dllName = "jacob-1.17-x64.dll";
+        String dllName = "jacob-1.18-x64.dll"; // Change to jacob-1.17-x64.dll for JPMorgan internal
         // Search multiple classpath locations:
         // 1. /native/ — extracted by maven-dependency-plugin during build
         // 2. JAR root — bundled inside com.hynnet:jacob dependency
@@ -157,7 +157,14 @@ public class OutlookClient {
 
     public JsonNode searchEmails(String searchText, boolean includePersonal, boolean includeShared) throws Exception {
         return executeOnComThread(() -> {
-            ActiveXComponent outlookApp = new ActiveXComponent("Outlook.Application");
+            ActiveXComponent outlookApp;
+            try {
+                outlookApp = new ActiveXComponent("Outlook.Application");
+            } catch (Exception e) {
+                log.error("Failed to connect to Outlook COM. Is Outlook running? Security policy may be blocking programmatic access.", e);
+                throw new RuntimeException("Cannot connect to Outlook. Ensure Outlook Desktop is running and "
+                        + "programmatic access is allowed in Trust Center > Macro Settings.");
+            }
             Dispatch namespace = Dispatch.call(outlookApp, "GetNamespace", "MAPI").toDispatch();
 
             List<ObjectNode> allEmails = new ArrayList<>();

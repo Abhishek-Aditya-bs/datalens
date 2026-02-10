@@ -24,6 +24,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -105,7 +106,7 @@ public class ChatService {
     public Flux<String> streamChatWithToolEvents(String message, String sessionId) {
         log.info("Processing chat with tool events for session: {}", sessionId);
 
-        return Flux.create(sink -> {
+        return Flux.<String>create(sink -> {
             try {
                 // Get conversation history from memory
                 List<Message> conversationHistory = new ArrayList<>();
@@ -126,7 +127,7 @@ public class ChatService {
                 sink.next(formatErrorEvent(e.getMessage()));
                 sink.complete();
             }
-        });
+        }).subscribeOn(Schedulers.boundedElastic()); // Run blocking tool loop on background thread so SSE events flush in real-time
     }
 
     private void processWithToolLoop(List<Message> messages, String sessionId,
