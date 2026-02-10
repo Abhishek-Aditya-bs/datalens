@@ -23,7 +23,7 @@
         <azure-identity.version>1.18.1</azure-identity.version>
         <oracle-jdbc.version>23.3.0.23.09</oracle-jdbc.version>
         <caffeine.version>3.1.8</caffeine.version>
-        <jacob.version>1.17</jacob.version>
+        <jacob.version>1.18</jacob.version>
     </properties>
 
     <dependencyManagement>
@@ -151,6 +151,47 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- Auto-download JACOB native DLL from GitHub releases.
+                 The com.hynnet:jacob Maven artifact only contains Java classes;
+                 the native DLL must be downloaded separately from the project releases.
+                 Downloaded once and cached in target/jacob/ across incremental builds. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>download-jacob-dll</id>
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <mkdir dir="${project.build.directory}/jacob"/>
+                                <get src="https://github.com/freemansoft/jacob-project/releases/download/Root_B-1_18/jacob-1.18.zip"
+                                     dest="${project.build.directory}/jacob/jacob-1.18.zip"
+                                     skipexisting="true"
+                                     ignoreerrors="true"/>
+                                <unzip src="${project.build.directory}/jacob/jacob-1.18.zip"
+                                       dest="${project.build.directory}/jacob"
+                                       overwrite="false">
+                                    <patternset>
+                                        <include name="**/jacob-1.18-x64.dll"/>
+                                    </patternset>
+                                </unzip>
+                                <mkdir dir="${project.build.outputDirectory}/native"/>
+                                <copy todir="${project.build.outputDirectory}/native"
+                                      failonerror="false"
+                                      flatten="true">
+                                    <fileset dir="${project.build.directory}/jacob"
+                                             includes="**/jacob-1.18-x64.dll"/>
+                                </copy>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

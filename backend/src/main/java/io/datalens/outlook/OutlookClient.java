@@ -51,18 +51,34 @@ public class OutlookClient {
 
     @PostConstruct
     public void init() {
-        try (InputStream is = getClass().getResourceAsStream("/native/jacob-1.17-x64.dll")) {
-            if (is != null) {
+        String dllName = "jacob-1.18-x64.dll";
+        // Search multiple classpath locations:
+        // 1. /native/ — extracted by maven-dependency-plugin during build
+        // 2. JAR root — bundled inside com.hynnet:jacob dependency
+        String[] searchPaths = {"/native/" + dllName, "/" + dllName};
+
+        InputStream dllStream = null;
+        String foundPath = null;
+        for (String path : searchPaths) {
+            dllStream = getClass().getResourceAsStream(path);
+            if (dllStream != null) {
+                foundPath = path;
+                break;
+            }
+        }
+
+        if (dllStream != null) {
+            try (InputStream is = dllStream) {
                 Path tempDll = Files.createTempFile("jacob", ".dll");
                 Files.copy(is, tempDll, StandardCopyOption.REPLACE_EXISTING);
                 tempDll.toFile().deleteOnExit();
                 System.setProperty("jacob.dll.path", tempDll.toAbsolutePath().toString());
-                log.info("JACOB DLL extracted to: {}", tempDll);
-            } else {
-                log.warn("JACOB DLL not found in resources. Ensure jacob-1.17-x64.dll is in src/main/resources/native/");
+                log.info("JACOB DLL loaded from classpath: {} -> {}", foundPath, tempDll);
+            } catch (Exception e) {
+                log.error("Failed to extract JACOB DLL: {}", e.getMessage(), e);
             }
-        } catch (Exception e) {
-            log.error("Failed to extract JACOB DLL: {}", e.getMessage(), e);
+        } else {
+            log.warn("JACOB DLL not found on classpath. Ensure the com.hynnet:jacob dependency is present in pom.xml.");
         }
     }
 
