@@ -22,7 +22,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       )}
 
       <div
-        className={`max-w-[80%] ${
+        className={`${
+          !isUser && message.toolCalls && message.toolCalls.length > 0
+            ? 'max-w-[95%]'
+            : 'max-w-[80%]'
+        } ${
           isUser
             ? 'bg-primary-600 text-white rounded-2xl rounded-tr-md'
             : 'bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-2xl rounded-tl-md'
@@ -77,7 +81,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 // Tables
                 table: ({ children }) => (
                   <div className="overflow-x-auto my-2">
-                    <table className="min-w-full border-collapse text-xs">
+                    <table className="min-w-full w-max border-collapse text-xs">
                       {children}
                     </table>
                   </div>
@@ -88,7 +92,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                   </th>
                 ),
                 td: ({ children }) => (
-                  <td className="border border-gray-300 dark:border-neutral-700 px-2 py-1 text-gray-700 dark:text-neutral-300">{children}</td>
+                  <td className="border border-gray-300 dark:border-neutral-700 px-2 py-1 text-gray-700 dark:text-neutral-300 whitespace-nowrap">{children}</td>
                 ),
               }}
             >
