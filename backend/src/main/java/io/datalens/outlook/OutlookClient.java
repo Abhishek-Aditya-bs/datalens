@@ -39,7 +39,7 @@ public class OutlookClient {
             $sharedMailbox = $env:DL_SHARED_MAILBOX
             $result = [ordered]@{ connected = $false }
             try {
-                $outlook = New-Object -ComObject Outlook.Application
+                $outlook = [System.Runtime.InteropServices.Marshal]::GetActiveComObject('Outlook.Application')
                 $ns = $outlook.GetNamespace('MAPI')
                 $result.connected = $true
                 $result.outlook_version = $outlook.Version
@@ -86,8 +86,9 @@ public class OutlookClient {
             $sharedMailbox = $env:DL_SHARED_MAILBOX
             $searchAllFolders = $env:DL_SEARCH_ALL_FOLDERS -eq 'true'
             $searchTimeout = [int]$env:DL_SEARCH_TIMEOUT
+            Add-Type -AssemblyName System.Windows.Forms
             try {
-                $outlook = New-Object -ComObject Outlook.Application
+                $outlook = [System.Runtime.InteropServices.Marshal]::GetActiveComObject('Outlook.Application')
                 $ns = $outlook.GetNamespace('MAPI')
                 $allEmails = [System.Collections.ArrayList]::new()
                 $escaped = $searchText -replace '"', '""'
@@ -140,7 +141,8 @@ public class OutlookClient {
                     $sw = [System.Diagnostics.Stopwatch]::StartNew()
                     $complete = $false
                     while (-not $complete -and $sw.Elapsed.TotalSeconds -lt $searchTimeout) {
-                        Start-Sleep -Milliseconds 200
+                        [System.Windows.Forms.Application]::DoEvents()
+                        Start-Sleep -Milliseconds 100
                         try { $complete = $search.SearchComplete } catch { break }
                     }
                     try {
