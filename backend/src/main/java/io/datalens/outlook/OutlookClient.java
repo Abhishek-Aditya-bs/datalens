@@ -4,366 +4,275 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.jacob.activeX.ActiveXComponent;
-import com.jacob.com.ComThread;
-import com.jacob.com.Dispatch;
-import com.jacob.com.Variant;
 import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+/**
+ * Outlook Desktop client that uses PowerShell to execute searches via Outlook COM.
+ * Uses AdvancedSearch (backed by Windows Search Index) for fast, non-blocking queries.
+ * No Jacob DLL or native dependencies required — runs entirely via PowerShell process execution.
+ */
 @Component
 @Profile("outlook")
 public class OutlookClient {
 
     private static final Logger log = LoggerFactory.getLogger(OutlookClient.class);
-    private static final int OL_FOLDER_INBOX = 6;
     private static final Pattern RE_FWD_PREFIX = Pattern.compile("^(?:RE|FW|FWD):\\s*", Pattern.CASE_INSENSITIVE);
-    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final OutlookConfig config;
     private final ObjectMapper objectMapper;
-    private final ExecutorService comExecutor;
+
+    private static final String CHECK_CONNECTION_SCRIPT = """
+            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+            $ErrorActionPreference = 'Stop'
+            $sharedMailbox = $env:DL_SHARED_MAILBOX
+            $result = [ordered]@{ connected = $false }
+            try {
+                $outlook = New-Object -ComObject Outlook.Application
+                $ns = $outlook.GetNamespace('MAPI')
+                $result.connected = $true
+                $result.outlook_version = $outlook.Version
+                try {
+                    $inbox = $ns.GetDefaultFolder(6)
+                    $result.personal_mailbox = $inbox.FolderPath
+                    $result.personal_mailbox_accessible = $true
+                } catch {
+                    $result.personal_mailbox_accessible = $false
+                    $result.personal_mailbox_error = $_.Exception.Message
+                }
+                if ($sharedMailbox) {
+                    try {
+                        $recip = $ns.CreateRecipient($sharedMailbox)
+                        $recip.Resolve()
+                        if ($recip.Resolved) {
+                            $sharedInbox = $ns.GetSharedDefaultFolder($recip, 6)
+                            $result.shared_mailbox = $sharedInbox.FolderPath
+                            $result.shared_mailbox_accessible = $true
+                        } else {
+                            $result.shared_mailbox_accessible = $false
+                            $result.shared_mailbox_error = "Could not resolve: $sharedMailbox"
+                        }
+                    } catch {
+                        $result.shared_mailbox_accessible = $false
+                        $result.shared_mailbox_error = $_.Exception.Message
+                    }
+                }
+            } catch {
+                $result.connected = $false
+                $result.error = $_.Exception.Message
+            }
+            $result | ConvertTo-Json -Depth 3 -Compress
+            """;
+
+    private static final String SEARCH_EMAILS_SCRIPT = """
+            [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+            $ErrorActionPreference = 'Stop'
+            $searchText = $env:DL_SEARCH_TEXT
+            $maxResults = [int]$env:DL_MAX_RESULTS
+            $maxBodyChars = [int]$env:DL_MAX_BODY_CHARS
+            $includePersonal = $env:DL_INCLUDE_PERSONAL -eq 'true'
+            $includeShared = $env:DL_INCLUDE_SHARED -eq 'true'
+            $sharedMailbox = $env:DL_SHARED_MAILBOX
+            $searchAllFolders = $env:DL_SEARCH_ALL_FOLDERS -eq 'true'
+            $searchTimeout = [int]$env:DL_SEARCH_TIMEOUT
+            try {
+                $outlook = New-Object -ComObject Outlook.Application
+                $ns = $outlook.GetNamespace('MAPI')
+                $allEmails = [System.Collections.ArrayList]::new()
+                $escaped = $searchText -replace '"', '""'
+                $filter = 'urn:schemas:httpmail:subject ci_phrasematch "' + $escaped + '" OR urn:schemas:httpmail:textdescription ci_phrasematch "' + $escaped + '"'
+                function Extract-Emails {
+                    param([object]$Results, [string]$MailboxType, [int]$Limit)
+                    $count = [Math]::Min($Results.Count, $Limit)
+                    for ($i = 1; $i -le $count; $i++) {
+                        try {
+                            $item = $Results.Item($i)
+                            $body = $item.Body
+                            if ($body) {
+                                $body = $body -replace '<[^>]+>', '' -replace '\\s+', ' '
+                                $body = $body.Trim()
+                                if ($body.Length -gt $maxBodyChars) {
+                                    $body = $body.Substring(0, $maxBodyChars) + '... [truncated]'
+                                }
+                            }
+                            $recipNames = @()
+                            try {
+                                for ($r = 1; $r -le $item.Recipients.Count; $r++) {
+                                    $recipNames += [string]$item.Recipients.Item($r).Name
+                                }
+                            } catch {}
+                            $receivedTime = $null
+                            try { $receivedTime = $item.ReceivedTime.ToString('yyyy-MM-dd HH:mm:ss') } catch {}
+                            $email = [ordered]@{
+                                subject = [string]$item.Subject
+                                sender_name = [string]$item.SenderName
+                                sender_email = [string]$item.SenderEmailAddress
+                                received_time = $receivedTime
+                                mailbox_type = $MailboxType
+                                importance = [int]$item.Importance
+                                unread = [bool]$item.UnRead
+                                attachments_count = [int]$item.Attachments.Count
+                                entry_id = [string]$item.EntryID
+                                recipients = @($recipNames)
+                                body = $body
+                            }
+                            [void]$allEmails.Add($email)
+                        } catch {}
+                    }
+                }
+                function Search-Mailbox {
+                    param([string]$Scope, [string]$MailboxType)
+                    $remaining = $maxResults - $allEmails.Count
+                    if ($remaining -le 0) { return }
+                    $tag = 'DL_' + $MailboxType + '_' + (Get-Date -Format 'yyyyMMddHHmmssfff')
+                    $search = $outlook.AdvancedSearch($Scope, $filter, $searchAllFolders, $tag)
+                    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                    $complete = $false
+                    while (-not $complete -and $sw.Elapsed.TotalSeconds -lt $searchTimeout) {
+                        Start-Sleep -Milliseconds 200
+                        try { $complete = $search.SearchComplete } catch { break }
+                    }
+                    try {
+                        Extract-Emails -Results $search.Results -MailboxType $MailboxType -Limit $remaining
+                    } catch {}
+                }
+                if ($includePersonal) {
+                    try {
+                        $inbox = $ns.GetDefaultFolder(6)
+                        $scope = "'" + $inbox.FolderPath + "'"
+                        Search-Mailbox -Scope $scope -MailboxType 'personal'
+                    } catch {}
+                }
+                if ($includeShared -and $sharedMailbox) {
+                    try {
+                        $recip = $ns.CreateRecipient($sharedMailbox)
+                        $recip.Resolve()
+                        if ($recip.Resolved) {
+                            $sharedInbox = $ns.GetSharedDefaultFolder($recip, 6)
+                            $scope = "'" + $sharedInbox.FolderPath + "'"
+                            Search-Mailbox -Scope $scope -MailboxType 'shared'
+                        }
+                    } catch {}
+                }
+                $emailsJson = '[]'
+                if ($allEmails.Count -gt 0) {
+                    $raw = @($allEmails) | ConvertTo-Json -Depth 4 -Compress
+                    if ($allEmails.Count -eq 1) {
+                        $emailsJson = '[' + $raw + ']'
+                    } else {
+                        $emailsJson = $raw
+                    }
+                }
+                '{"status":"success","emails":' + $emailsJson + '}'
+            } catch {
+                @{ status = 'error'; error = $_.Exception.Message } | ConvertTo-Json -Compress
+            }
+            """;
 
     public OutlookClient(OutlookConfig config, ObjectMapper objectMapper) {
         this.config = config;
         this.objectMapper = objectMapper;
-        // Single-thread executor — all COM calls must happen on the same STA thread
-        this.comExecutor = Executors.newSingleThreadExecutor(r -> {
-            Thread t = new Thread(r, "outlook-com-thread");
-            t.setDaemon(true);
-            return t;
-        });
     }
 
     @PostConstruct
     public void init() {
-        String dllName = "jacob-1.18-x64.dll"; // Change to jacob-1.17-x64.dll for JPMorgan internal
-        // Search multiple classpath locations:
-        // 1. /native/ — extracted by maven-dependency-plugin during build
-        // 2. JAR root — bundled inside com.hynnet:jacob dependency
-        String[] searchPaths = {"/native/" + dllName, "/" + dllName};
-
-        InputStream dllStream = null;
-        String foundPath = null;
-        for (String path : searchPaths) {
-            dllStream = getClass().getResourceAsStream(path);
-            if (dllStream != null) {
-                foundPath = path;
-                break;
-            }
-        }
-
-        if (dllStream != null) {
-            try (InputStream is = dllStream) {
-                Path tempDll = Files.createTempFile("jacob", ".dll");
-                Files.copy(is, tempDll, StandardCopyOption.REPLACE_EXISTING);
-                tempDll.toFile().deleteOnExit();
-                System.setProperty("jacob.dll.path", tempDll.toAbsolutePath().toString());
-                log.info("JACOB DLL loaded from classpath: {} -> {}", foundPath, tempDll);
-            } catch (Exception e) {
-                log.error("Failed to extract JACOB DLL: {}", e.getMessage(), e);
-            }
-        } else {
-            log.warn("JACOB DLL not found on classpath. Ensure the com.hynnet:jacob dependency is present in pom.xml.");
-        }
-    }
-
-    @PreDestroy
-    public void shutdown() {
-        comExecutor.shutdownNow();
-    }
-
-    /**
-     * Execute a callable on the dedicated COM STA thread.
-     */
-    private <T> T executeOnComThread(Callable<T> task) throws Exception {
-        Future<T> future = comExecutor.submit(() -> {
-            ComThread.InitSTA();
-            try {
-                return task.call();
-            } finally {
-                ComThread.Release();
-            }
-        });
-        try {
-            return future.get(config.getSearchTimeoutSeconds() + 10, TimeUnit.SECONDS);
-        } catch (ExecutionException e) {
-            throw (e.getCause() instanceof Exception) ? (Exception) e.getCause() : new RuntimeException(e.getCause());
-        } catch (TimeoutException e) {
-            future.cancel(true);
-            throw new RuntimeException("Outlook COM operation timed out after " + (config.getSearchTimeoutSeconds() + 10) + "s");
-        }
+        log.info("Outlook integration active (PowerShell-based, using Windows Search Index via AdvancedSearch)");
     }
 
     public JsonNode checkConnection() throws Exception {
-        return executeOnComThread(() -> {
-            ObjectNode result = objectMapper.createObjectNode();
-            ActiveXComponent outlookApp = new ActiveXComponent("Outlook.Application");
-            Dispatch namespace = Dispatch.call(outlookApp, "GetNamespace", "MAPI").toDispatch();
-
-            result.put("connected", true);
-            result.put("outlook_version", Dispatch.get(outlookApp, "Version").getString());
-
-            // Check personal mailbox
-            try {
-                Dispatch personalInbox = Dispatch.call(namespace, "GetDefaultFolder", OL_FOLDER_INBOX).toDispatch();
-                String personalFolderPath = Dispatch.get(personalInbox, "FolderPath").getString();
-                result.put("personal_mailbox", personalFolderPath);
-                result.put("personal_mailbox_accessible", true);
-            } catch (Exception e) {
-                result.put("personal_mailbox_accessible", false);
-                result.put("personal_mailbox_error", e.getMessage());
-            }
-
-            // Check shared mailbox
-            String sharedEmail = config.getSharedMailboxEmail();
-            if (sharedEmail != null && !sharedEmail.isBlank()) {
-                try {
-                    Dispatch recipient = Dispatch.call(namespace, "CreateRecipient", sharedEmail).toDispatch();
-                    Dispatch.call(recipient, "Resolve");
-                    boolean resolved = Dispatch.get(recipient, "Resolved").getBoolean();
-                    if (resolved) {
-                        Dispatch sharedInbox = Dispatch.call(namespace, "GetSharedDefaultFolder", recipient, OL_FOLDER_INBOX).toDispatch();
-                        String sharedFolderPath = Dispatch.get(sharedInbox, "FolderPath").getString();
-                        result.put("shared_mailbox", sharedFolderPath);
-                        result.put("shared_mailbox_accessible", true);
-                    } else {
-                        result.put("shared_mailbox_accessible", false);
-                        result.put("shared_mailbox_error", "Could not resolve recipient: " + sharedEmail);
-                    }
-                } catch (Exception e) {
-                    result.put("shared_mailbox_accessible", false);
-                    result.put("shared_mailbox_error", e.getMessage());
-                }
-            }
-
-            return result;
-        });
+        Map<String, String> env = new HashMap<>();
+        env.put("DL_SHARED_MAILBOX", nullSafe(config.getSharedMailboxEmail()));
+        return executePowerShell(CHECK_CONNECTION_SCRIPT, env);
     }
 
     public JsonNode searchEmails(String searchText, boolean includePersonal, boolean includeShared) throws Exception {
-        return executeOnComThread(() -> {
-            ActiveXComponent outlookApp;
-            try {
-                outlookApp = new ActiveXComponent("Outlook.Application");
-            } catch (Exception e) {
-                log.error("Failed to connect to Outlook COM. Is Outlook running? Security policy may be blocking programmatic access.", e);
-                throw new RuntimeException("Cannot connect to Outlook. Ensure Outlook Desktop is running and "
-                        + "programmatic access is allowed in Trust Center > Macro Settings.");
-            }
-            Dispatch namespace = Dispatch.call(outlookApp, "GetNamespace", "MAPI").toDispatch();
+        log.info("Searching Outlook via PowerShell: query='{}', personal={}, shared={}", searchText, includePersonal, includeShared);
 
-            List<ObjectNode> allEmails = new ArrayList<>();
+        Map<String, String> env = new HashMap<>();
+        env.put("DL_SEARCH_TEXT", searchText);
+        env.put("DL_MAX_RESULTS", String.valueOf(config.getMaxSearchResults()));
+        env.put("DL_MAX_BODY_CHARS", String.valueOf(config.getMaxBodyChars()));
+        env.put("DL_INCLUDE_PERSONAL", String.valueOf(includePersonal && config.isSearchPersonalMailbox()));
+        env.put("DL_INCLUDE_SHARED", String.valueOf(includeShared && config.isSearchSharedMailbox()));
+        env.put("DL_SHARED_MAILBOX", nullSafe(config.getSharedMailboxEmail()));
+        env.put("DL_SEARCH_ALL_FOLDERS", String.valueOf(config.isSearchAllFolders()));
+        env.put("DL_SEARCH_TIMEOUT", String.valueOf(config.getSearchTimeoutSeconds()));
 
-            // Search personal mailbox
-            if (includePersonal && config.isSearchPersonalMailbox()) {
-                try {
-                    Dispatch personalInbox = Dispatch.call(namespace, "GetDefaultFolder", OL_FOLDER_INBOX).toDispatch();
-                    String folderPath = Dispatch.get(personalInbox, "FolderPath").getString();
-                    List<ObjectNode> personalResults = searchFolder(outlookApp, namespace, personalInbox, folderPath, searchText, "personal");
-                    allEmails.addAll(personalResults);
-                    log.info("Personal mailbox search returned {} emails", personalResults.size());
-                } catch (Exception e) {
-                    log.error("Error searching personal mailbox: {}", e.getMessage(), e);
+        JsonNode psResult = executePowerShell(SEARCH_EMAILS_SCRIPT, env);
+
+        if ("error".equals(psResult.path("status").asText())) {
+            throw new RuntimeException("Outlook search failed: " + psResult.path("error").asText("Unknown error"));
+        }
+
+        List<ObjectNode> allEmails = new ArrayList<>();
+        JsonNode emailsNode = psResult.path("emails");
+        if (emailsNode.isArray()) {
+            for (JsonNode email : emailsNode) {
+                if (email.isObject()) {
+                    allEmails.add((ObjectNode) email);
                 }
             }
+        }
 
-            // Search shared mailbox
-            String sharedEmail = config.getSharedMailboxEmail();
-            if (includeShared && config.isSearchSharedMailbox() && sharedEmail != null && !sharedEmail.isBlank()) {
-                try {
-                    Dispatch recipient = Dispatch.call(namespace, "CreateRecipient", sharedEmail).toDispatch();
-                    Dispatch.call(recipient, "Resolve");
-                    boolean resolved = Dispatch.get(recipient, "Resolved").getBoolean();
-                    if (resolved) {
-                        Dispatch sharedInbox = Dispatch.call(namespace, "GetSharedDefaultFolder", recipient, OL_FOLDER_INBOX).toDispatch();
-                        String folderPath = Dispatch.get(sharedInbox, "FolderPath").getString();
-                        List<ObjectNode> sharedResults = searchFolder(outlookApp, namespace, sharedInbox, folderPath, searchText, "shared");
-                        allEmails.addAll(sharedResults);
-                        log.info("Shared mailbox search returned {} emails", sharedResults.size());
-                    }
-                } catch (Exception e) {
-                    log.error("Error searching shared mailbox: {}", e.getMessage(), e);
-                }
+        log.info("PowerShell search returned {} emails", allEmails.size());
+        return buildResponse(searchText, allEmails);
+    }
+
+    private JsonNode executePowerShell(String script, Map<String, String> envVars) throws Exception {
+        byte[] scriptBytes = script.getBytes(StandardCharsets.UTF_16LE);
+        String encodedScript = Base64.getEncoder().encodeToString(scriptBytes);
+
+        ProcessBuilder pb = new ProcessBuilder(
+                "powershell.exe", "-NoProfile", "-NonInteractive",
+                "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodedScript
+        );
+        pb.environment().putAll(envVars);
+        pb.redirectErrorStream(true);
+
+        long timeoutSeconds = config.getSearchTimeoutSeconds() + 15;
+        Process process = pb.start();
+
+        CompletableFuture<String> outputFuture = CompletableFuture.supplyAsync(() -> {
+            try (InputStream is = process.getInputStream()) {
+                return new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                return "";
             }
-
-            return buildResponse(searchText, allEmails);
         });
-    }
 
-    private List<ObjectNode> searchFolder(ActiveXComponent outlookApp, Dispatch namespace,
-                                          Dispatch folder, String folderPath,
-                                          String searchText, String mailboxType) {
-        List<ObjectNode> results = new ArrayList<>();
-
-        // Try AdvancedSearch first
-        try {
-            results = advancedSearch(outlookApp, folderPath, searchText, mailboxType);
-        } catch (Exception e) {
-            log.warn("AdvancedSearch failed, falling back to Restrict: {}", e.getMessage());
+        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            throw new RuntimeException("PowerShell timed out after " + timeoutSeconds + "s");
         }
 
-        // Fallback to Restrict filter if AdvancedSearch returned nothing
-        if (results.isEmpty()) {
-            try {
-                results = restrictSearch(folder, searchText, mailboxType);
-            } catch (Exception e) {
-                log.error("Restrict search also failed: {}", e.getMessage(), e);
-            }
+        String output = outputFuture.get(5, TimeUnit.SECONDS).trim();
+        if (output.isBlank()) {
+            throw new RuntimeException("PowerShell returned empty output (exit code: " + process.exitValue() + ")");
         }
 
-        return results;
-    }
-
-    private List<ObjectNode> advancedSearch(ActiveXComponent outlookApp, String folderPath,
-                                            String searchText, String mailboxType) throws Exception {
-        String escapedText = searchText.replace("\"", "\"\"");
-        String daslQuery = "urn:schemas:httpmail:subject ci_phrasematch '" + escapedText + "' "
-                + "OR urn:schemas:httpmail:textdescription ci_phrasematch '" + escapedText + "'";
-
-        String scope = "'" + folderPath + "'";
-        String tag = "DataLensSearch_" + System.currentTimeMillis();
-
-        Dispatch search = Dispatch.call(outlookApp, "AdvancedSearch", scope, daslQuery, config.isSearchAllFolders(), tag).toDispatch();
-
-        // Poll for results with timeout
-        int timeoutMs = config.getSearchTimeoutSeconds() * 1000;
-        int elapsed = 0;
-        int pollInterval = 250;
-
-        while (elapsed < timeoutMs) {
-            try {
-                Dispatch searchResults = Dispatch.get(search, "Results").toDispatch();
-                int count = Dispatch.get(searchResults, "Count").getInt();
-                if (count > 0) {
-                    return extractEmails(searchResults, count, mailboxType);
-                }
-                // If Tag property indicates completion, break early
-                break;
-            } catch (Exception e) {
-                // Search still running, wait and retry
-                Thread.sleep(pollInterval);
-                elapsed += pollInterval;
-            }
+        // Skip any non-JSON preamble (warnings, BOM, etc.)
+        int jsonStart = output.indexOf('{');
+        if (jsonStart < 0) {
+            throw new RuntimeException("No JSON in PowerShell output: " + output.substring(0, Math.min(200, output.length())));
+        }
+        if (jsonStart > 0) {
+            log.debug("Skipped {} chars of PowerShell preamble", jsonStart);
+            output = output.substring(jsonStart);
         }
 
-        // Final attempt to get results
-        try {
-            Dispatch searchResults = Dispatch.get(search, "Results").toDispatch();
-            int count = Dispatch.get(searchResults, "Count").getInt();
-            if (count > 0) {
-                return extractEmails(searchResults, count, mailboxType);
-            }
-        } catch (Exception e) {
-            log.debug("No results from AdvancedSearch: {}", e.getMessage());
-        }
-
-        return Collections.emptyList();
-    }
-
-    private List<ObjectNode> restrictSearch(Dispatch folder, String searchText, String mailboxType) {
-        List<ObjectNode> results = new ArrayList<>();
-
-        String escapedText = searchText.replace("\"", "\"\"");
-        String filter = "@SQL=\"urn:schemas:httpmail:subject\" LIKE '%" + escapedText + "%' "
-                + "OR \"urn:schemas:httpmail:textdescription\" LIKE '%" + escapedText + "%'";
-
-        Dispatch items = Dispatch.get(folder, "Items").toDispatch();
-        Dispatch filteredItems = Dispatch.call(items, "Restrict", filter).toDispatch();
-        int count = Dispatch.get(filteredItems, "Count").getInt();
-
-        int limit = Math.min(count, config.getMaxSearchResults());
-        for (int i = 1; i <= limit; i++) {
-            try {
-                Dispatch item = Dispatch.call(filteredItems, "Item", i).toDispatch();
-                ObjectNode email = extractSingleEmail(item, mailboxType);
-                if (email != null) {
-                    results.add(email);
-                }
-            } catch (Exception e) {
-                log.debug("Error extracting email at index {}: {}", i, e.getMessage());
-            }
-        }
-
-        return results;
-    }
-
-    private List<ObjectNode> extractEmails(Dispatch searchResults, int count, String mailboxType) {
-        List<ObjectNode> emails = new ArrayList<>();
-        int limit = Math.min(count, config.getMaxSearchResults());
-
-        for (int i = 1; i <= limit; i++) {
-            try {
-                Dispatch item = Dispatch.call(searchResults, "Item", i).toDispatch();
-                ObjectNode email = extractSingleEmail(item, mailboxType);
-                if (email != null) {
-                    emails.add(email);
-                }
-            } catch (Exception e) {
-                log.debug("Error extracting search result at index {}: {}", i, e.getMessage());
-            }
-        }
-
-        return emails;
-    }
-
-    private ObjectNode extractSingleEmail(Dispatch item, String mailboxType) {
-        try {
-            ObjectNode email = objectMapper.createObjectNode();
-
-            email.put("subject", safeGetString(item, "Subject"));
-            email.put("sender_name", safeGetString(item, "SenderName"));
-            email.put("sender_email", safeGetString(item, "SenderEmailAddress"));
-            email.put("received_time", safeGetDate(item, "ReceivedTime"));
-            email.put("mailbox_type", mailboxType);
-            email.put("importance", safeGetInt(item, "Importance"));
-            email.put("unread", safeGetBoolean(item, "UnRead"));
-            email.put("attachments_count", safeGetInt(item, "Attachments.Count"));
-            email.put("entry_id", safeGetString(item, "EntryID"));
-
-            // Get recipients
-            ArrayNode recipientList = objectMapper.createArrayNode();
-            try {
-                Dispatch recipients = Dispatch.get(item, "Recipients").toDispatch();
-                int recipCount = Dispatch.get(recipients, "Count").getInt();
-                for (int r = 1; r <= recipCount; r++) {
-                    Dispatch recip = Dispatch.call(recipients, "Item", r).toDispatch();
-                    recipientList.add(safeGetString(recip, "Name"));
-                }
-            } catch (Exception e) {
-                log.debug("Error reading recipients: {}", e.getMessage());
-            }
-            email.set("recipients", recipientList);
-
-            // Get body — truncate and strip HTML
-            String body = safeGetString(item, "Body");
-            if (body != null) {
-                body = stripHtmlTags(body);
-                if (body.length() > config.getMaxBodyChars()) {
-                    body = body.substring(0, config.getMaxBodyChars()) + "... [truncated]";
-                }
-            }
-            email.put("body", body);
-
-            return email;
-        } catch (Exception e) {
-            log.debug("Error extracting email: {}", e.getMessage());
-            return null;
-        }
+        return objectMapper.readTree(output);
     }
 
     private JsonNode buildResponse(String searchText, List<ObjectNode> allEmails) {
@@ -389,7 +298,6 @@ public class OutlookClient {
         summary.put("total_emails", allEmails.size());
         summary.put("conversations", conversations.size());
 
-        // Date range
         String earliest = allEmails.stream()
                 .map(e -> e.path("received_time").asText(""))
                 .filter(s -> !s.isEmpty())
@@ -403,7 +311,6 @@ public class OutlookClient {
         if (!earliest.isEmpty()) summary.put("date_range_start", earliest);
         if (!latest.isEmpty()) summary.put("date_range_end", latest);
 
-        // Mailbox distribution
         ObjectNode mailboxDist = objectMapper.createObjectNode();
         long personalCount = allEmails.stream().filter(e -> "personal".equals(e.path("mailbox_type").asText())).count();
         long sharedCount = allEmails.stream().filter(e -> "shared".equals(e.path("mailbox_type").asText())).count();
@@ -411,7 +318,6 @@ public class OutlookClient {
         mailboxDist.put("shared", sharedCount);
         summary.set("mailbox_distribution", mailboxDist);
 
-        // Unique participants
         Set<String> participants = new LinkedHashSet<>();
         for (ObjectNode email : allEmails) {
             String sender = email.path("sender_name").asText("");
@@ -459,7 +365,6 @@ public class OutlookClient {
     private String normalizeSubject(String subject) {
         if (subject == null) return "";
         String normalized = subject.trim();
-        // Repeatedly strip Re:/Fwd:/FW: prefixes
         String previous;
         do {
             previous = normalized;
@@ -468,56 +373,7 @@ public class OutlookClient {
         return normalized;
     }
 
-    private String safeGetString(Dispatch item, String property) {
-        try {
-            Variant v = Dispatch.get(item, property);
-            return v != null ? v.getString() : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private int safeGetInt(Dispatch item, String property) {
-        try {
-            Variant v = Dispatch.get(item, property);
-            return v != null ? v.getInt() : 0;
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
-    private boolean safeGetBoolean(Dispatch item, String property) {
-        try {
-            Variant v = Dispatch.get(item, property);
-            return v != null && v.getBoolean();
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private String safeGetDate(Dispatch item, String property) {
-        try {
-            Variant v = Dispatch.get(item, property);
-            if (v != null) {
-                Date date = v.getJavaDate();
-                if (date != null) {
-                    LocalDateTime ldt = date.toInstant()
-                            .atZone(java.time.ZoneId.systemDefault())
-                            .toLocalDateTime();
-                    return ldt.format(DATE_FORMAT);
-                }
-            }
-        } catch (Exception e) {
-            // Fall back to string representation
-            try {
-                return Dispatch.get(item, property).getString();
-            } catch (Exception ignored) {}
-        }
-        return null;
-    }
-
-    private String stripHtmlTags(String text) {
-        if (text == null) return null;
-        return text.replaceAll("<[^>]+>", "").replaceAll("\\s+", " ").trim();
+    private String nullSafe(String value) {
+        return value != null ? value : "";
     }
 }

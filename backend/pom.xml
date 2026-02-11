@@ -23,7 +23,6 @@
         <azure-identity.version>1.18.1</azure-identity.version>
         <oracle-jdbc.version>23.3.0.23.09</oracle-jdbc.version>
         <caffeine.version>3.1.8</caffeine.version>
-        <jacob.version>1.18</jacob.version>
     </properties>
 
     <dependencyManagement>
@@ -111,15 +110,6 @@
             <version>${caffeine.version}</version>
         </dependency>
 
-        <!-- JACOB - Java COM Bridge for Outlook Desktop interop (Windows only)
-             For JPMorgan internal: change groupId to net.sf.jacob-project and version to 1.17 -->
-        <dependency>
-            <groupId>com.hynnet</groupId>
-            <artifactId>jacob</artifactId>
-            <version>${jacob.version}</version>
-            <optional>true</optional>
-        </dependency>
-
         <!-- Micrometer Prometheus (optional - for Prometheus metrics export) -->
         <dependency>
             <groupId>io.micrometer</groupId>
@@ -156,45 +146,6 @@
 
         </plugins>
     </build>
-
-    <profiles>
-        <!-- Activate with: mvn compile -Poutlook-native
-             Copies the JACOB native DLL from Maven repo to classpath.
-             For JPMorgan internal: change groupId to net.sf.jacob-project and version to 1.17. -->
-        <profile>
-            <id>outlook-native</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-dependency-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>copy-jacob-dll</id>
-                                <phase>generate-resources</phase>
-                                <goals>
-                                    <goal>copy</goal>
-                                </goals>
-                                <configuration>
-                                    <artifactItems>
-                                        <artifactItem>
-                                            <groupId>com.hynnet</groupId>
-                                            <artifactId>jacob</artifactId>
-                                            <version>${jacob.version}</version>
-                                            <classifier>x64</classifier>
-                                            <type>dll</type>
-                                            <outputDirectory>${project.build.outputDirectory}/native</outputDirectory>
-                                            <destFileName>jacob-${jacob.version}-x64.dll</destFileName>
-                                        </artifactItem>
-                                    </artifactItems>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-    </profiles>
 
     <repositories>
         <repository>
